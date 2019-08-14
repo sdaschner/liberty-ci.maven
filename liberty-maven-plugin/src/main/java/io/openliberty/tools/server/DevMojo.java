@@ -1,12 +1,12 @@
 /**
  * (C) Copyright IBM Corporation 2019.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,34 +15,14 @@
  */
 package io.openliberty.tools.server;
 
-import static org.twdata.maven.mojoexecutor.MojoExecutor.artifactId;
-import static org.twdata.maven.mojoexecutor.MojoExecutor.configuration;
-import static org.twdata.maven.mojoexecutor.MojoExecutor.element;
-import static org.twdata.maven.mojoexecutor.MojoExecutor.executeMojo;
-import static org.twdata.maven.mojoexecutor.MojoExecutor.executionEnvironment;
-import static org.twdata.maven.mojoexecutor.MojoExecutor.goal;
-import static org.twdata.maven.mojoexecutor.MojoExecutor.groupId;
-import static org.twdata.maven.mojoexecutor.MojoExecutor.name;
-import static org.twdata.maven.mojoexecutor.MojoExecutor.plugin;
-import static org.twdata.maven.mojoexecutor.MojoExecutor.version;
-
-import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-
+import io.openliberty.tools.utils.MavenProjectUtil;
+import net.wasdev.wlp.ant.ServerTask;
+import net.wasdev.wlp.common.plugins.util.DevUtil;
+import net.wasdev.wlp.common.plugins.util.PluginExecutionException;
+import net.wasdev.wlp.common.plugins.util.PluginScenarioException;
+import net.wasdev.wlp.common.plugins.util.ServerFeatureUtil;
 import org.apache.maven.artifact.Artifact;
-import org.apache.maven.model.Dependency;
-import org.apache.maven.model.Model;
-import org.apache.maven.model.Plugin;
-import org.apache.maven.model.PluginExecution;
-import org.apache.maven.model.Resource;
+import org.apache.maven.model.*;
 import org.apache.maven.model.io.xpp3.MavenXpp3Reader;
 import org.apache.maven.plugin.BuildPluginManager;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -60,14 +40,20 @@ import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResolutionException;
 import org.eclipse.aether.resolution.DependencyResult;
-import org.twdata.maven.mojoexecutor.MojoExecutor.Element;
+import org.twdata.maven.mojoexecutor.MojoExecutor.*;
 
-import io.openliberty.tools.utils.MavenProjectUtil;
-import net.wasdev.wlp.ant.ServerTask;
-import net.wasdev.wlp.common.plugins.util.DevUtil;
-import net.wasdev.wlp.common.plugins.util.PluginExecutionException;
-import net.wasdev.wlp.common.plugins.util.PluginScenarioException;
-import net.wasdev.wlp.common.plugins.util.ServerFeatureUtil;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+import static org.twdata.maven.mojoexecutor.MojoExecutor.*;
 
 /**
  * Start a liberty server in dev mode import to set ResolutionScope for TEST as
@@ -96,6 +82,9 @@ public class DevMojo extends StartDebugMojoSupport {
 
     @Parameter(property = "liberty.debug.port", defaultValue = "7777")
     private int libertyDebugPort;
+
+    @Parameter(property = "skipServer", defaultValue = "false")
+    private boolean skipServer;
 
     private int runId = 0;
 
@@ -167,7 +156,7 @@ public class DevMojo extends StartDebugMojoSupport {
         Set<String> existingFeatures;
 
         public DevMojoUtil(File serverDirectory, File sourceDirectory, File testSourceDirectory, File configDirectory,
-                List<File> resourceDirs) throws IOException {
+                           List<File> resourceDirs) throws IOException {
             super(serverDirectory, sourceDirectory, testSourceDirectory, configDirectory, resourceDirs, hotTests,
                     skipTests, skipUTs, skipITs, project.getArtifactId(), appUpdateTimeout);
 
@@ -240,6 +229,7 @@ public class DevMojo extends StartDebugMojoSupport {
                 copyConfigFiles();
                 serverTask.setClean(clean);
                 serverTask.setOperation("debug");
+
                 return serverTask;
             }
         }
@@ -414,15 +404,15 @@ public class DevMojo extends StartDebugMojoSupport {
         if (skip) {
             return;
         }
-        
+
         // look for a .sRunning file to check if the server has already started
-        if (serverDirectory.exists()) {
-            File sRunning = new File(serverDirectory.getCanonicalPath()  + "/workarea/.sRunning");
+        if (serverDirectory.exists() && !skipServer) {
+            File sRunning = new File(serverDirectory.getCanonicalPath() + "/workarea/.sRunning");
             if (sRunning.exists()) {
                 throw new MojoExecutionException("The server " + serverName + " is already running. Terminate all instances of the server before starting dev mode.");
             }
         }
-        
+
         // create an executor for tests with an additional queue of size 1, so
         // any further changes detected mid-test will be in the following run
         final ThreadPoolExecutor executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
@@ -450,13 +440,17 @@ public class DevMojo extends StartDebugMojoSupport {
         log.debug("Test Source directory: " + testSourceDirectory);
         log.debug("Test Output directory: " + testOutputDirectory);
 
-        log.info("Running goal: create-server");
-        runLibertyMavenPlugin("create-server", serverName, null);
-        log.info("Running goal: install-feature");
-        runLibertyMavenPlugin("install-feature", serverName, null);
-        log.info("Running goal: install-apps");
-        runLibertyMavenPlugin("install-apps", serverName, null);
-        
+        if (skipServer)
+            log.info("NOT running goal: create-server, install-feature, or install-apps");
+        else {
+            log.info("Running goal: create-server");
+            runLibertyMavenPlugin("create-server", serverName, null);
+            log.info("Running goal: install-feature");
+            runLibertyMavenPlugin("install-feature", serverName, null);
+            log.info("Running goal: install-apps");
+            runLibertyMavenPlugin("install-apps", serverName, null);
+        }
+
         // resource directories
         List<File> resourceDirs = new ArrayList<File>();
         if (outputDirectory.exists()) {
@@ -477,7 +471,11 @@ public class DevMojo extends StartDebugMojoSupport {
         DevMojoUtil util = new DevMojoUtil(serverDirectory, sourceDirectory, testSourceDirectory, configDirectory, resourceDirs);
         util.addShutdownHook(executor);
         util.enableServerDebug(libertyDebugPort);
-        util.startServer(serverStartTimeout, verifyTimeout);
+
+        if (skipServer)
+            log.info("NOT starting server in debug mode");
+        else
+            util.startServer(serverStartTimeout, verifyTimeout);
 
         // collect artifacts canonical paths in order to build classpath
         List<String> artifactPaths = util.getArtifacts();
@@ -492,8 +490,22 @@ public class DevMojo extends StartDebugMojoSupport {
 
         // pom.xml
         File pom = project.getFile();
-        
-        util.watchFiles(pom, outputDirectory, testOutputDirectory, executor, artifactPaths, configFile);
+
+        File serverOutputDirectory = outputDirectory;
+
+        if (skipServer) {
+            String deployArtifact = getDeployArtifactPath();
+            serverOutputDirectory = new File(serverDirectory, "apps/expanded/" + deployArtifact + "/WEB-INF/classes/");
+            log.debug("Overriding output directory: " + serverOutputDirectory);
+        }
+
+        util.watchFiles(pom, serverOutputDirectory, testOutputDirectory, executor, artifactPaths, configFile);
+    }
+
+    private String getDeployArtifactPath() {
+        String deployArtifact = getProject().getBuild().getFinalName() + '.' + getProject().getPackaging();
+        log.debug("Assuming artifact name: " + deployArtifact);
+        return deployArtifact;
     }
 
     private void addArtifacts(org.eclipse.aether.graph.DependencyNode root, List<File> artifacts) {
@@ -586,23 +598,25 @@ public class DevMojo extends StartDebugMojoSupport {
 
         executeMojo(plugin, goal(phase), config, executionEnvironment(project, session.clone(), pluginManager));
     }
-    
+
     /**
      * Given the groupId and artifactId get the corresponding plugin
+     *
      * @param groupId
      * @param artifactId
      * @return Plugin
      */
-    private Plugin getPlugin(String groupId, String artifactId){
+    private Plugin getPlugin(String groupId, String artifactId) {
         Plugin plugin = project.getPlugin(groupId + ":" + artifactId);
         if (plugin == null) {
             plugin = plugin(groupId(groupId), artifactId(artifactId), version("RELEASE"));
         }
         return plugin;
     }
-    
+
     /**
      * Given the Plugin get the Xpp3Dom configuration
+     *
      * @param plugin
      * @param phase
      * @return configuration specified in pom.xml
@@ -614,11 +628,11 @@ public class DevMojo extends StartDebugMojoSupport {
         for (Plugin p : buildPlugins) {
             if (p.equals(plugin)) {
                 config = (Xpp3Dom) p.getConfiguration();
-                
+
                 PluginExecution pluginExecution = null;
                 Map<String, PluginExecution> peMap = p.getExecutionsAsMap();
 
-                String[] defaultExecutionIds = new String[]{ "default-" + phase, phase, "default" };
+                String[] defaultExecutionIds = new String[]{"default-" + phase, phase, "default"};
                 for (String executionId : defaultExecutionIds) {
                     pluginExecution = peMap.get(executionId);
                     if (pluginExecution != null) {
@@ -639,8 +653,7 @@ public class DevMojo extends StartDebugMojoSupport {
      * Force change a property so that the checksum calculated by
      * AbstractSurefireMojo is different every time.
      *
-     * @param config
-     *            The configuration element
+     * @param config The configuration element
      */
     private void injectTestId(Xpp3Dom config) {
         Xpp3Dom properties = config.getChild("properties");
@@ -689,8 +702,8 @@ public class DevMojo extends StartDebugMojoSupport {
                     }
                     elements.add(element(name("features"), featureElems));
                 } else if (goal.equals("install-apps")) {
-                    String appsDirectory = MavenProjectUtil.getPluginExecutionConfiguration(project, 
-                        LIBERTY_MAVEN_PLUGIN_GROUP_ID, LIBERTY_MAVEN_PLUGIN_ARTIFACT_ID, "install-apps", "appsDirectory");
+                    String appsDirectory = MavenProjectUtil.getPluginExecutionConfiguration(project,
+                            LIBERTY_MAVEN_PLUGIN_GROUP_ID, LIBERTY_MAVEN_PLUGIN_ARTIFACT_ID, "install-apps", "appsDirectory");
                     if (appsDirectory != null) {
                         elements.add(element(name("appsDirectory"), appsDirectory));
                     }
